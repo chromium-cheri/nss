@@ -1077,6 +1077,9 @@ SQLITE_PRIVATE const char **sqlite3CompileOptions(int *pnOpt){
 #ifndef SQLITE3_H
 #define SQLITE3_H
 #include <stdarg.h>     /* Needed for the definition of va_list */
+#if defined(__CHERI_PURE_CAPABILITY__)
+#include <stdalign.h>
+#endif   // __CHERI_PURE_CAPABILITY__
 
 /*
 ** Make sure we can call this stuff from C++.
@@ -13099,6 +13102,10 @@ struct fts5_api {
 ** So we have to define the macros in different ways depending on the
 ** compiler.
 */
+#if defined(__CHERI_PURE_CAPABILITY__)
+# define SQLITE_INT_TO_PTR(X)  ((void*)(intptr_t)(X))
+# define SQLITE_PTR_TO_INT(X)  ((intptr_t)(X))
+#else   // !__CHERI_PURE_CAPABILITY__
 #if defined(__PTRDIFF_TYPE__)  /* This case should work for GCC */
 # define SQLITE_INT_TO_PTR(X)  ((void*)(__PTRDIFF_TYPE__)(X))
 # define SQLITE_PTR_TO_INT(X)  ((int)(__PTRDIFF_TYPE__)(X))
@@ -13112,6 +13119,7 @@ struct fts5_api {
 # define SQLITE_INT_TO_PTR(X)  ((void*)(X))
 # define SQLITE_PTR_TO_INT(X)  ((int)(X))
 #endif
+#endif   // !__CHERI_PURE_CAPABILITY__
 
 /*
 ** A macro to hint to the compiler that a function should not be
@@ -22955,11 +22963,20 @@ static void *sqlite3MemMalloc(int nByte){
 #else
   sqlite3_int64 *p;
   assert( nByte>0 );
+#if defined(__CHERI_PURE_CAPABILITY__)
   testcase( ROUND8(nByte)!=nByte );
+  p = SQLITE_MALLOC( nByte + sizeof(max_align_t) );
+#else   // !__CHERI_PURE_CAPABILITY__
+  testcase( __builtin_align_up(nByte, alignof(max_align_t))!=nByte );
   p = SQLITE_MALLOC( nByte+8 );
+#endif  // !__CHERI_PURE_CAPABILITY__
   if( p ){
     p[0] = nByte;
+#if defined(__CHERI_PURE_CAPABILITY__)
+    p = (sqlite3_int64 *) ((char *) p + sizeof(max_align_t));
+#else   // !__CHERI_PURE_CAPABILITY__
     p++;
+#endif  // !__CHERI_PURE_CAPABILITY__
   }else{
     testcase( sqlite3GlobalConfig.xLog!=0 );
     sqlite3_log(SQLITE_NOMEM, "failed to allocate %u bytes of memory", nByte);
@@ -22982,7 +22999,11 @@ static void sqlite3MemFree(void *pPrior){
 #else
   sqlite3_int64 *p = (sqlite3_int64*)pPrior;
   assert( pPrior!=0 );
+#if defined(__CHERI_PURE_CAPABILITY__)
+  p = (sqlite3_int64 *)((char *) p - sizeof(max_align_t));
+#else   // !__CHERI_PURE_CAPABILITY__
   p--;
+#endif  // !__CHERI_PURE_CAPABILITY__
   SQLITE_FREE(p);
 #endif
 }
@@ -22999,7 +23020,11 @@ static int sqlite3MemSize(void *pPrior){
   sqlite3_int64 *p;
   assert( pPrior!=0 );
   p = (sqlite3_int64*)pPrior;
+#if defined(__CHERI_PURE_CAPABILITY__)
+  p = (sqlite3_int64 *)((char *) p - sizeof(max_align_t));
+#else   // !__CHERI_PURE_CAPABILITY__
   p--;
+#endif  // !__CHERI_PURE_CAPABILITY__
   return (int)p[0];
 #endif
 }
@@ -23028,11 +23053,20 @@ static void *sqlite3MemRealloc(void *pPrior, int nByte){
   sqlite3_int64 *p = (sqlite3_int64*)pPrior;
   assert( pPrior!=0 && nByte>0 );
   assert( nByte==ROUND8(nByte) ); /* EV: R-46199-30249 */
+#if defined(__CHERI_PURE_CAPABILITY__)
+  p = (sqlite3_int64 *)((char *) p - sizeof(max_align_t));
+  p = SQLITE_REALLOC(p, nByte+sizeof(max_align_t) );
+#else   // !__CHERI_PURE_CAPABILITY__
   p--;
   p = SQLITE_REALLOC(p, nByte+8 );
+#endif  // !__CHERI_PURE_CAPABILITY__
   if( p ){
     p[0] = nByte;
+#if defined(__CHERI_PURE_CAPABILITY__)
+    p = (sqlite3_int64 *) ((char *) p + sizeof(max_align_t));
+#else   // !__CHERI_PURE_CAPABILITY__
     p++;
+#endif  // !__CHERI_PURE_CAPABILITY__
   }else{
     testcase( sqlite3GlobalConfig.xLog!=0 );
     sqlite3_log(SQLITE_NOMEM,
@@ -23047,7 +23081,11 @@ static void *sqlite3MemRealloc(void *pPrior, int nByte){
 ** Round up a request size to the next valid allocation size.
 */
 static int sqlite3MemRoundup(int n){
+#if defined(__CHERI_PURE_CAPABILITY__)
+  return __builtin_align_up(n, alignof(max_align_t));
+#else   // !__CHERI_PURE_CAPABILITY__
   return ROUND8(n);
+#endif  //  !__CHERI_PURE_CAPABILITY__
 }
 
 /*
@@ -83957,8 +83995,14 @@ static VdbeCursor *allocateCursor(
   int nByte;
   VdbeCursor *pCx = 0;
   nByte = 
+#if defined(__CHERI_PURE_CAPABILITY__)
+      __builtin_align_up(sizeof(VdbeCursor) + 2*sizeof(u32)*nField,
+      alignof(max_align_t)) +
+      (eCurType==CURTYPE_BTREE?sqlite3BtreeCursorSize():0);
+#else   // !__CHERI_PURE_CAPABILITY__
       ROUND8(sizeof(VdbeCursor)) + 2*sizeof(u32)*nField + 
       (eCurType==CURTYPE_BTREE?sqlite3BtreeCursorSize():0);
+#endif  // !__CHERI_PURE_CAPABILITY__
 
   assert( iCur>=0 && iCur<p->nCursor );
   if( p->apCsr[iCur] ){ /*OPTIMIZATION-IF-FALSE*/
@@ -83979,7 +84023,12 @@ static VdbeCursor *allocateCursor(
     pCx->aOffset = &pCx->aType[nField];
     if( eCurType==CURTYPE_BTREE ){
       pCx->uc.pCursor = (BtCursor*)
+#if defined(__CHERI_PURE_CAPABILITY__)
+          &pMem->z[__builtin_align_up(
+          sizeof(VdbeCursor)+2*sizeof(u32)*nField, alignof(max_align_t))];
+#else   // !__CHERI_PURE_CAPABILITY__
           &pMem->z[ROUND8(sizeof(VdbeCursor))+2*sizeof(u32)*nField];
+#endif  // !__CHERI_PURE_CAPABILITY__
       sqlite3BtreeCursorZero(pCx->uc.pCursor);
     }
   }

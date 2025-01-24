@@ -6615,9 +6615,10 @@ loser:
 void
 tls(char *reqfn)
 {
-    char buf[256]; /* holds one line from the input REQUEST file.
+    char buf[257]; /* holds one line from the input REQUEST file.
                          * needs to be large enough to hold the longest
                          * line "XSeed = <128 hex digits>\n".
+			 * And a string terminator hex_to_str().
                          */
     unsigned char *pms = NULL;
     int pms_len;
